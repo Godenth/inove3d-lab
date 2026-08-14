@@ -844,18 +844,34 @@ function initLoginScreen(){
   if(u) u.addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('loginSenha')?.focus(); });
 }
 
+function comTimeout(promessa, ms, msgTimeout){
+  return Promise.race([
+    promessa,
+    new Promise((_, reject)=> setTimeout(()=> reject(new Error(msgTimeout)), ms))
+  ]);
+}
+
 async function loadData(){
   loading = true; render();
   try{
-    const { data: rc, error: e1 } = await supa.from('clientes').select('*').order('nome');
+    const { data: rc, error: e1 } = await comTimeout(
+      supa.from('clientes').select('*').order('nome'),
+      12000, 'Tempo esgotado ao buscar clientes. Verifique sua conexão ou as configurações do Supabase.'
+    );
     if(e1) throw e1;
     registryClients = (rc||[]).map(clienteFromDb);
 
-    const { data: re, error: e2 } = await supa.from('extratos').select('*');
+    const { data: re, error: e2 } = await comTimeout(
+      supa.from('extratos').select('*'),
+      12000, 'Tempo esgotado ao buscar extratos. Verifique sua conexão ou as configurações do Supabase.'
+    );
     if(e2) throw e2;
     extratos = (re||[]).map(extratoFromDb);
 
-    const { data: cfg } = await supa.from('config').select('*');
+    const { data: cfg } = await comTimeout(
+      supa.from('config').select('*'),
+      12000, 'Tempo esgotado ao buscar configurações.'
+    );
     if(cfg){
       const dU = cfg.find(c=>c.chave==='diaUtilVencimento');
       const vM = cfg.find(c=>c.chave==='vencimentosManuais');
@@ -866,7 +882,8 @@ async function loadData(){
     loadError = null;
   }catch(e){
     registryClients = []; extratos = [];
-    loadError = 'Não foi possível carregar os dados do Supabase: '+(e.message||e);
+    loadError = 'Não foi possível carregar os dados do Supabase: '+(e && e.message ? e.message : e);
+    console.error('Erro ao carregar dados do Supabase:', e);
   }
   loading = false;
   render();
@@ -1937,6 +1954,56 @@ function bindDetailPanelEvents(){
 // ---------------------------------------------------------------
 // Página: Conta e Senha
 // ---------------------------------------------------------------
+// Modal genérico que pede a senha atual antes de confirmar uma ação perigosa.
+// Reautentica no Supabase pra garantir que é mesmo o dono da conta digitando.
+function abrirConfirmacaoSenha(mensagem, onConfirmado){
+  const existing = document.querySelector('.overlay');
+  if(existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <button type="button" class="close" id="cpClose">×</button>
+      <h2 style="color:var(--red);">⚠️ Confirmação necessária</h2>
+      <p style="font-size:13.5px; color:var(--ink-soft); margin-top:0;">${escapeHtml(mensagem)}</p>
+      <div class="field"><label>Sua senha *</label><input id="cpSenha" type="password" autocomplete="current-password"></div>
+      <div id="cpErro" class="err-box" style="display:none; margin-top:14px;"></div>
+      <div class="actions">
+        <button type="button" class="btn ghost" id="cpCancel">Cancelar</button>
+        <button type="button" class="btn danger" id="cpConfirmar">Confirmar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
+  const close = ()=> overlay.remove();
+  onIn(overlay,'cpClose','onclick', close);
+  onIn(overlay,'cpCancel','onclick', close);
+  const senhaInput = overlay.querySelector('#cpSenha');
+  if(senhaInput){
+    senhaInput.focus();
+    senhaInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter') overlay.querySelector('#cpConfirmar')?.click(); });
+  }
+  onIn(overlay,'cpConfirmar','onclick', async ()=>{
+    const erroBox = overlay.querySelector('#cpErro');
+    const senha = overlay.querySelector('#cpSenha')?.value || '';
+    const email = (currentSupaUser && currentSupaUser.email) || '';
+    if(!senha){ erroBox.textContent='Digite sua senha.'; erroBox.style.display='block'; return; }
+    if(!email){ erroBox.textContent='Não foi possível identificar sua conta. Faça login novamente.'; erroBox.style.display='block'; return; }
+    const btn = overlay.querySelector('#cpConfirmar');
+    if(btn) btn.disabled = true;
+    const { error } = await supa.auth.signInWithPassword({ email, password: senha });
+    if(btn) btn.disabled = false;
+    if(error){
+      erroBox.textContent = 'Senha incorreta.';
+      erroBox.style.display = 'block';
+      return;
+    }
+    close();
+    await onConfirmado();
+  });
+}
+
 function renderConta(main){
   const emailAtual = (currentSupaUser && currentSupaUser.email) || '—';
   main.innerHTML = `
@@ -1964,7 +2031,29 @@ function renderConta(main){
         <button type="button" class="btn" id="ctaSalvar">Salvar nova senha</button>
       </div>
     </div>
+
+    <div class="detail-panel" style="max-width:440px; margin-top:20px; border-color:var(--red);">
+      <h3 class="section-label" style="margin-top:0; color:var(--red);">⚠️ Zona de perigo</h3>
+      <p style="font-size:13px; color:var(--ink-soft); margin:0 0 14px;">Apaga <b>todos os lançamentos financeiros</b> (extratos, pagamentos, observações) de todos os clientes e de todos os meses. Os clientes cadastrados não são apagados, só os lançamentos. Essa ação não pode ser desfeita.</p>
+      <button type="button" class="btn danger" id="ctaApagarLancamentos">🗑️ Apagar todos os lançamentos financeiros</button>
+    </div>
   `;
+
+  on('ctaApagarLancamentos','onclick', ()=>{
+    abrirConfirmacaoSenha(
+      'Isso vai apagar TODOS os lançamentos financeiros (extratos, pagamentos, observações) de todos os clientes e meses. Digite sua senha pra confirmar.',
+      async ()=>{
+        try{
+          extratos = [];
+          await saveExtratos();
+          showToast('Todos os lançamentos financeiros foram apagados.');
+          render();
+        }catch(e){
+          showToast('Erro ao apagar: '+(e.message||e));
+        }
+      }
+    );
+  });
 
   on('ctaSalvarEmail','onclick', async ()=>{
     const erroBox = document.getElementById('ctaErroEmail');
@@ -1998,99 +2087,6 @@ function renderConta(main){
   });
 }
 
-// ---------------------------------------------------------------
-// Gerador de dados de teste (10 clientes + extratos variados)
-// ---------------------------------------------------------------
-async function criarClientesTeste(){
-  const nomes = [
-    'Ana Beatriz Souza','Bruno Henrique Lima','Carla Mendes Rocha','Diego Alves Ferreira',
-    'Fernanda Costa Silva','Gustavo Ramos Pinto','Isabela Martins Cruz','João Pedro Oliveira',
-    'Larissa Nunes Barros','Marcos Vinícius Teixeira'
-  ];
-  const cidadesEstados = [
-    ['São Paulo','SP'],['Rio de Janeiro','RJ'],['Belo Horizonte','MG'],['Curitiba','PR'],
-    ['Porto Alegre','RS'],['Salvador','BA'],['Fortaleza','CE'],['Recife','PE'],
-    ['Brasília','DF'],['Campinas','SP']
-  ];
-  const formas = ['Pix','Boleto','Cartão'];
-  const notasExemplo = [
-    'Disse que vai pagar assim que receber do convênio.',
-    'Aguardando repasse da clínica.',
-    'Combinado pagamento em duas parcelas.',
-    'Pediu para reenviar o extrato por WhatsApp.',
-    'Confirmou que já efetuou o pagamento, aguardando comprovante.'
-  ];
-  const rnd = (min,max)=> Math.floor(Math.random()*(max-min+1))+min;
-  const pick = arr => arr[Math.floor(Math.random()*arr.length)];
-
-  const novosClientes = [];
-  const novosExtratos = [];
-  const mesesTeste = [selectedMonth, shiftMonth(selectedMonth,-1), shiftMonth(selectedMonth,-2)];
-
-  nomes.forEach((nome,i)=>{
-    const [cidade, estado] = cidadesEstados[i];
-    const cli = {
-      id: uid(), createdAt: todayStr(), nome,
-      cpfCnpj: `${rnd(100,999)}.${rnd(100,999)}.${rnd(100,999)}-${rnd(10,99)}`,
-      cro: `CRO-${estado} ${rnd(10000,99999)}`,
-      cidade, estado,
-      endereco: `Rua ${pick(['das Flores','Sete de Setembro','Principal','dos Andradas','XV de Novembro'])}, ${rnd(10,999)}`
-    };
-    novosClientes.push(cli);
-
-    mesesTeste.forEach(mes=>{
-      const valorMes = rnd(8,60) * 100; // entre 800 e 6000, múltiplo de 100
-      const tipo = pick(['quitado','quitado','parcial','parcial','pendente']); // mais chance de quitado/parcial
-      let valorPago = 0;
-      const pagamentos = [];
-      const [anoM, mesM] = mes.split('-').map(Number);
-      const diaPag = String(rnd(1,25)).padStart(2,'0');
-      const dataPag = `${anoM}-${String(mesM).padStart(2,'0')}-${diaPag}`;
-
-      if(tipo==='quitado'){
-        valorPago = valorMes;
-        pagamentos.push({
-          id: uid(), valor: valorMes, data: dataPag, obs:'', formaPagamento: pick(formas),
-          comprovante: Math.random()<0.6 ? {anexado:true, nota:'comprovante_'+pick(formas).toLowerCase()+'.jpg'} : {anexado:false, nota:''}
-        });
-      } else if(tipo==='parcial'){
-        valorPago = Math.round(valorMes * (rnd(20,70)/100) / 10) * 10;
-        pagamentos.push({
-          id: uid(), valor: valorPago, data: dataPag, obs: pick(['primeira parcela','sinal',''])  , formaPagamento: pick(formas),
-          comprovante: Math.random()<0.4 ? {anexado:true, nota:'comprovante.jpg'} : {anexado:false, nota:''}
-        });
-      }
-
-      const extratoEnviado = Math.random()<0.7;
-      const notas = Math.random()<0.35 ? [{id:uid(), data: dataPag, texto: pick(notasExemplo)}] : [];
-
-      novosExtratos.push({
-        id: uid(), createdAt: todayStr(), mes, clienteId: cli.id,
-        valorMes, valorPago,
-        extratoEnviado, extratoEnviadoData: extratoEnviado ? dataPag : null,
-        comprovante: {anexado:false, nota:'', data:null},
-        pagamentos, notas
-      });
-    });
-  });
-
-  registryClients = registryClients.concat(novosClientes);
-  extratos = extratos.concat(novosExtratos);
-  await saveRegistryClients();
-  await saveExtratos();
-}
-
-async function gerarDadosTeste(){
-  if(!confirm('Isso vai criar 10 clientes de teste com extratos variados (pagos, parciais, pendentes, atrasados). Pode ficar misturado com seus dados reais. Deseja continuar?')) return;
-  try{
-    await criarClientesTeste();
-    showToast('10 clientes de teste criados com sucesso!');
-  }catch(e){
-    showToast('Erro ao gerar dados de teste: '+(e && e.message ? e.message : e));
-  }
-  render();
-}
-
 function renderCadastro(main){
   const filtered = registryClients.filter(cl=>{
     if(!cadSearchTerm) return true;
@@ -2109,7 +2105,6 @@ function renderCadastro(main){
     </div>
     <div class="toolbar">
       <input type="search" id="searchCad" placeholder="Buscar por nome, CPF, CRO, cidade…" value="${cadSearchTerm.replace(/"/g,'&quot;')}">
-      <button type="button" class="btn ghost small" id="btnGerarTeste">🧪 Gerar 10 clientes teste</button>
       <button type="button" class="btn" id="btnNovoCliente">+ Novo cliente</button>
     </div>
     <div class="ruler" style="margin-bottom:16px;"></div>
@@ -2122,7 +2117,6 @@ function renderCadastro(main){
     </div>
   `;
 
-  on('btnGerarTeste','onclick', gerarDadosTeste);
   on('btnNovoCliente','onclick', ()=>openClienteForm(null));
   on('searchCad','oninput', (e)=>{ cadSearchTerm = e.target.value; renderCadListOnly(); });
   document.querySelectorAll('.cad-item').forEach(el=>{ el.onclick = ()=> openClienteForm(el.dataset.id); });
