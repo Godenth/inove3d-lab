@@ -779,12 +779,6 @@ async function saveRegistryClients(){
       const {error} = await supa.from('clientes').upsert(registryClients.map(clienteToDb));
       if(error) throw error;
     }
-    const idsAtuais = registryClients.map(c=>c.id);
-    if(idsAtuais.length>0){
-      await supa.from('clientes').delete().not('id','in',`(${idsAtuais.join(',')})`);
-    }else{
-      await supa.from('clientes').delete().neq('id','00000000-0000-0000-0000-000000000000');
-    }
   }catch(e){ showToast('Erro ao salvar clientes: '+(e.message||e)); }
 }
 async function saveExtratos(){
@@ -793,13 +787,16 @@ async function saveExtratos(){
       const {error} = await supa.from('extratos').upsert(extratos.map(extratoToDb));
       if(error) throw error;
     }
-    const idsAtuais = extratos.map(e=>e.id);
-    if(idsAtuais.length>0){
-      await supa.from('extratos').delete().not('id','in',`(${idsAtuais.join(',')})`);
-    }else{
-      await supa.from('extratos').delete().neq('id','00000000-0000-0000-0000-000000000000');
-    }
   }catch(e){ showToast('Erro ao salvar extratos: '+(e.message||e)); }
+}
+// Exclusão direta e imediata no banco (mais confiável que sincronizar o array inteiro)
+async function deleteExtratoDb(id){
+  const { error } = await supa.from('extratos').delete().eq('id', id);
+  if(error){ showToast('Erro ao excluir extrato: '+error.message); throw error; }
+}
+async function deleteClienteDb(id){
+  const { error } = await supa.from('clientes').delete().eq('id', id);
+  if(error){ showToast('Erro ao excluir cliente: '+error.message); throw error; }
 }
 async function saveConfig(){
   try{
@@ -1970,9 +1967,11 @@ function bindDetailPanelEvents(){
 
   panel.querySelector('#dDelete')?.addEventListener('click', async ()=>{
     if(!confirm('Excluir este extrato? Esta ação não pode ser desfeita.')) return;
-    extratos = extratos.filter(x=>x.id!==ex.id);
-    await saveExtratos();
-    showToast('Extrato excluído.');
+    try{
+      await deleteExtratoDb(ex.id);
+      extratos = extratos.filter(x=>x.id!==ex.id);
+      showToast('Extrato excluído.');
+    }catch(e){ /* erro já mostrado em deleteExtratoDb */ }
     selectedExtratoId = null;
     render();
   });
@@ -2004,59 +2003,8 @@ function bindDetailPanelEvents(){
 // ---------------------------------------------------------------
 // Página: Cadastro de Clientes
 // ---------------------------------------------------------------
-// ---------------------------------------------------------------
 // Página: Conta e Senha
 // ---------------------------------------------------------------
-// Modal genérico que pede a senha atual antes de confirmar uma ação perigosa.
-// Reautentica no Supabase pra garantir que é mesmo o dono da conta digitando.
-function abrirConfirmacaoSenha(mensagem, onConfirmado){
-  const existing = document.querySelector('.overlay');
-  if(existing) existing.remove();
-  const overlay = document.createElement('div');
-  overlay.className = 'overlay';
-  overlay.innerHTML = `
-    <div class="modal">
-      <button type="button" class="close" id="cpClose">×</button>
-      <h2 style="color:var(--red);">⚠️ Confirmação necessária</h2>
-      <p style="font-size:13.5px; color:var(--ink-soft); margin-top:0;">${escapeHtml(mensagem)}</p>
-      <div class="field"><label>Sua senha *</label><input id="cpSenha" type="password" autocomplete="current-password"></div>
-      <div id="cpErro" class="err-box" style="display:none; margin-top:14px;"></div>
-      <div class="actions">
-        <button type="button" class="btn ghost" id="cpCancel">Cancelar</button>
-        <button type="button" class="btn danger" id="cpConfirmar">Confirmar</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
-  const close = ()=> overlay.remove();
-  onIn(overlay,'cpClose','onclick', close);
-  onIn(overlay,'cpCancel','onclick', close);
-  const senhaInput = overlay.querySelector('#cpSenha');
-  if(senhaInput){
-    senhaInput.focus();
-    senhaInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter') overlay.querySelector('#cpConfirmar')?.click(); });
-  }
-  onIn(overlay,'cpConfirmar','onclick', async ()=>{
-    const erroBox = overlay.querySelector('#cpErro');
-    const senha = overlay.querySelector('#cpSenha')?.value || '';
-    const email = (currentSupaUser && currentSupaUser.email) || '';
-    if(!senha){ erroBox.textContent='Digite sua senha.'; erroBox.style.display='block'; return; }
-    if(!email){ erroBox.textContent='Não foi possível identificar sua conta. Faça login novamente.'; erroBox.style.display='block'; return; }
-    const btn = overlay.querySelector('#cpConfirmar');
-    if(btn) btn.disabled = true;
-    const { error } = await supa.auth.signInWithPassword({ email, password: senha });
-    if(btn) btn.disabled = false;
-    if(error){
-      erroBox.textContent = 'Senha incorreta.';
-      erroBox.style.display = 'block';
-      return;
-    }
-    close();
-    await onConfirmado();
-  });
-}
-
 function renderConta(main){
   const emailAtual = (currentSupaUser && currentSupaUser.email) || '—';
   main.innerHTML = `
@@ -2084,29 +2032,7 @@ function renderConta(main){
         <button type="button" class="btn" id="ctaSalvar">Salvar nova senha</button>
       </div>
     </div>
-
-    <div class="detail-panel" style="max-width:440px; margin-top:20px; border-color:var(--red);">
-      <h3 class="section-label" style="margin-top:0; color:var(--red);">⚠️ Zona de perigo</h3>
-      <p style="font-size:13px; color:var(--ink-soft); margin:0 0 14px;">Apaga <b>todos os lançamentos financeiros</b> (extratos, pagamentos, observações) de todos os clientes e de todos os meses. Os clientes cadastrados não são apagados, só os lançamentos. Essa ação não pode ser desfeita.</p>
-      <button type="button" class="btn danger" id="ctaApagarLancamentos">🗑️ Apagar todos os lançamentos financeiros</button>
-    </div>
   `;
-
-  on('ctaApagarLancamentos','onclick', ()=>{
-    abrirConfirmacaoSenha(
-      'Isso vai apagar TODOS os lançamentos financeiros (extratos, pagamentos, observações) de todos os clientes e meses. Digite sua senha pra confirmar.',
-      async ()=>{
-        try{
-          extratos = [];
-          await saveExtratos();
-          showToast('Todos os lançamentos financeiros foram apagados.');
-          render();
-        }catch(e){
-          showToast('Erro ao apagar: '+(e.message||e));
-        }
-      }
-    );
-  });
 
   on('ctaSalvarEmail','onclick', async ()=>{
     const erroBox = document.getElementById('ctaErroEmail');
@@ -2183,9 +2109,12 @@ function renderCadastro(main){
         ? `Este cliente tem ${count} extrato(s) lançado(s). Eles serão mantidos, mas ficarão sem cliente vinculado. Deseja excluir mesmo assim?`
         : `Excluir o cliente "${cli.nome}"?`;
       if(!confirm(msg)) return;
-      registryClients = registryClients.filter(x=>x.id!==cli.id);
-      await saveRegistryClients();
-      showToast('Cliente excluído.');
+      try{
+        await deleteClienteDb(cli.id);
+        registryClients = registryClients.filter(x=>x.id!==cli.id);
+        extratos.forEach(ex=>{ if(ex.clienteId===cli.id) ex.clienteId = null; });
+        showToast('Cliente excluído.');
+      }catch(e){ /* erro já mostrado em deleteClienteDb */ }
       render();
     };
   });
@@ -2272,10 +2201,13 @@ function openClienteForm(clienteId){
         ? `Este cliente tem ${count} extrato(s) lançado(s). Eles serão mantidos, mas ficarão sem cliente vinculado. Deseja excluir mesmo assim?`
         : 'Excluir este cliente?';
       if(!confirm(msg)) return;
-      registryClients = registryClients.filter(x=>x.id!==cli.id);
-      await saveRegistryClients();
-      showToast('Cliente excluído.');
-      close(); render();
+      try{
+        await deleteClienteDb(cli.id);
+        registryClients = registryClients.filter(x=>x.id!==cli.id);
+        extratos.forEach(ex=>{ if(ex.clienteId===cli.id) ex.clienteId = null; });
+        showToast('Cliente excluído.');
+        close(); render();
+      }catch(e){ /* erro já mostrado em deleteClienteDb */ }
     });
   }
 
