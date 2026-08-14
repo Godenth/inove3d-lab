@@ -513,6 +513,20 @@
   .login-logo span{color:var(--gold-bright);}
   .login-sub{font-family:var(--mono); font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--ink-faint); margin:6px 0 24px;}
   .login-card .field{text-align:left;}
+  .senha-wrap{position:relative;}
+  .senha-wrap input{padding-right:42px;}
+  .toggle-senha{
+    position:absolute; right:6px; top:50%; transform:translateY(-50%);
+    background:none; border:none; cursor:pointer; font-size:15px; padding:6px; line-height:1;
+    opacity:.6; filter:grayscale(1);
+  }
+  .toggle-senha:hover{opacity:1;}
+  .toggle-senha.showing{opacity:1; filter:none;}
+  .lembrar-row{
+    margin-top:10px; text-align:left; font-family:var(--sans); font-size:12.5px; color:var(--ink-soft);
+  }
+  .lembrar-row label{display:flex; align-items:center; gap:7px; cursor:pointer;}
+  .lembrar-row input[type=checkbox]{width:14px; height:14px; accent-color:var(--gold); cursor:pointer;}
   .login-erro{
     background:var(--red-bg); border:1px solid var(--red); color:var(--red); border-radius:4px;
     padding:9px 12px; font-size:12.5px; margin-top:14px;
@@ -574,8 +588,20 @@
   <div class="login-card">
     <div class="login-logo">INOVE<span>3D</span> LAB</div>
     <div class="login-sub">Acesso ao sistema</div>
-    <div class="field"><label>E-mail</label><input id="loginUsuario" type="email" autocomplete="username"></div>
-    <div class="field"><label>Senha</label><input id="loginSenha" type="password" autocomplete="current-password"></div>
+    <div class="field"><label>E-mail</label><input id="loginUsuario" type="email" autocomplete="username" list="loginEmailSugestoes"></div>
+    <datalist id="loginEmailSugestoes">
+      <option value="inove3dlab@gmail.com"></option>
+    </datalist>
+    <div class="field">
+      <label>Senha</label>
+      <div class="senha-wrap">
+        <input id="loginSenha" type="password" autocomplete="current-password">
+        <button type="button" id="toggleSenha" class="toggle-senha" tabindex="-1" aria-label="Mostrar senha">👁</button>
+      </div>
+    </div>
+    <div class="lembrar-row">
+      <label><input type="checkbox" id="lembrarEmail"> Lembrar meu e-mail</label>
+    </div>
     <div id="loginErro" class="login-erro" style="display:none;"></div>
     <button type="button" class="btn" id="btnEntrar" style="width:100%; margin-top:16px;">Entrar</button>
   </div>
@@ -793,6 +819,8 @@ async function loadAuth(){
   currentSupaUser = (data && data.session && data.session.user) || null;
 }
 
+const EMAIL_PADRAO_INOVE = 'inove3dlab@gmail.com';
+
 function showLoginScreen(){
   const tela = document.getElementById('loginScreen');
   const app = document.getElementById('app');
@@ -800,10 +828,22 @@ function showLoginScreen(){
   if(app) app.style.display = 'none';
   const erro = document.getElementById('loginErro');
   if(erro) erro.style.display = 'none';
+
+  const emailLembrado = localStorage.getItem('inove3d-lembrar-email');
   const u = document.getElementById('loginUsuario');
-  if(u){ u.value=''; u.focus(); }
+  const chk = document.getElementById('lembrarEmail');
+  if(u){
+    u.value = emailLembrado || EMAIL_PADRAO_INOVE;
+    if(!emailLembrado) u.select?.();
+  }
+  if(chk) chk.checked = !!emailLembrado;
+
   const s = document.getElementById('loginSenha');
-  if(s) s.value = '';
+  if(s){ s.value = ''; s.type = 'password'; }
+  const toggleBtn = document.getElementById('toggleSenha');
+  if(toggleBtn) toggleBtn.classList.remove('showing');
+
+  if(s) s.focus(); else if(u) u.focus();
 }
 function hideLoginScreen(){
   const tela = document.getElementById('loginScreen');
@@ -824,6 +864,10 @@ async function tentarLogin(){
     if(erro){ erro.textContent = 'E-mail ou senha incorretos.'; erro.style.display = 'block'; }
     return;
   }
+  const lembrar = document.getElementById('lembrarEmail')?.checked;
+  if(lembrar){ localStorage.setItem('inove3d-lembrar-email', email); }
+  else{ localStorage.removeItem('inove3d-lembrar-email'); }
+
   isLoggedIn = true;
   currentSupaUser = (data && data.user) || null;
   hideLoginScreen();
@@ -842,6 +886,15 @@ function initLoginScreen(){
   if(s) s.addEventListener('keydown', (e)=>{ if(e.key==='Enter') tentarLogin(); });
   const u = document.getElementById('loginUsuario');
   if(u) u.addEventListener('keydown', (e)=>{ if(e.key==='Enter') document.getElementById('loginSenha')?.focus(); });
+  on('toggleSenha','onclick', ()=>{
+    const senhaInput = document.getElementById('loginSenha');
+    const btn = document.getElementById('toggleSenha');
+    if(!senhaInput || !btn) return;
+    const mostrando = senhaInput.type === 'text';
+    senhaInput.type = mostrando ? 'password' : 'text';
+    btn.classList.toggle('showing', !mostrando);
+    senhaInput.focus();
+  });
 }
 
 function comTimeout(promessa, ms, msgTimeout){
@@ -2152,6 +2205,7 @@ function initials(nome){
   return (parts[0][0]+parts[parts.length-1][0]).toUpperCase();
 }
 function avatarColor(id){
+  if(!id) return AVATAR_COLORS[0];
   let h = 0;
   for(let i=0;i<id.length;i++){ h = (h*31 + id.charCodeAt(i)) % AVATAR_COLORS.length; }
   return AVATAR_COLORS[Math.abs(h)];
