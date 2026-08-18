@@ -312,6 +312,13 @@
   .btn.danger{background:transparent; color:var(--red); border:1px solid var(--red);}
   .btn.danger:hover{background:var(--red-bg);}
   .btn.small{padding:8px 13px; font-size:13px;}
+  .btn:disabled, .btn[disabled]{
+    opacity:.35; cursor:not-allowed; pointer-events:none;
+    background:var(--panel-alt) !important; color:var(--ink-faint) !important; border-color:var(--line) !important;
+  }
+  .field input:disabled, .field textarea:disabled, .field select:disabled{
+    opacity:.5; cursor:not-allowed; background:var(--panel);
+  }
 
   /* ---------- layout de duas colunas: lista + detalhe ---------- */
   .two-pane{display:grid; grid-template-columns: minmax(300px, 0.85fr) minmax(380px, 1.15fr); gap:16px; align-items:start;}
@@ -386,7 +393,7 @@
   .qa-btn:hover{border-color:var(--gold-dim); color:var(--ink);}
   .qa-btn.active{background:var(--gold-dim); border-color:var(--gold); color:var(--gold-bright);}
   .qa-btn.active-green{background:var(--green-bg); border-color:var(--green); color:#8FDA9E;}
-  .qa-btn:disabled{opacity:.4; cursor:not-allowed;}
+  .qa-btn:disabled{opacity:.4; cursor:not-allowed; pointer-events:none;}
 
   .section-label{
     font-family:var(--mono); font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--ink-faint);
@@ -609,6 +616,7 @@
 <div id="toast" class="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script>
 // ---------------------------------------------------------------
 // Conexão com o Supabase
@@ -616,6 +624,11 @@
 const SUPABASE_URL = 'https://swmmredvdqyikscaokua.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_AjUZ5dTRVfQx_fcxFtrV3Q_W9xU4qeC';
 const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// PDF.js — usado pra ler o texto dos extratos em PDF na importação automática
+if(window.pdfjsLib){
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+}
 
 // ---------------------------------------------------------------
 // Estado
@@ -756,7 +769,8 @@ function extratoToDb(ex){
     valor_mes: ex.valorMes||0, valor_pago: ex.valorPago||0,
     extrato_enviado: !!ex.extratoEnviado, extrato_enviado_data: ex.extratoEnviadoData||null,
     comprovante: ex.comprovante || {anexado:false, nota:''},
-    pagamentos: ex.pagamentos || [], notas: ex.notas || []
+    pagamentos: ex.pagamentos || [], notas: ex.notas || [],
+    texto_importado: ex.textoImportado || null
   };
 }
 function extratoFromDb(row){
@@ -766,6 +780,7 @@ function extratoFromDb(row){
     extratoEnviado: !!row.extrato_enviado, extratoEnviadoData: row.extrato_enviado_data,
     comprovante: row.comprovante || {anexado:false, nota:''},
     pagamentos: row.pagamentos || [], notas: row.notas || [],
+    textoImportado: row.texto_importado || null,
     createdAt: row.created_at
   };
 }
@@ -1404,7 +1419,11 @@ function renderFinanceiro(main, readonly){
       <div class="pane-list">
         <div class="toolbar">
           <input type="search" id="search" placeholder="Buscar cliente…" value="${searchTerm.replace(/"/g,'&quot;')}">
-          ${readonly ? '' : '<button type="button" class="btn small" id="btnNovoExtrato">+ Novo</button>'}
+          ${readonly ? '' : `
+            <button type="button" class="btn small ghost" id="btnImportarExtrato">📥 Importar PDF</button>
+            <input type="file" id="importPdfInput" accept="application/pdf" style="display:none;">
+            <button type="button" class="btn small" id="btnNovoExtrato">+ Novo</button>
+          `}
         </div>
         <div class="toolbar tabs">
           ${tabs.map(([k,l])=>`<div class="tab ${filterTab===k?'active':''}" data-tab="${k}">${l}</div>`).join('')}
@@ -1470,6 +1489,44 @@ function renderFinanceiro(main, readonly){
   if(readonly) return;
 
   on('btnNovoExtrato','onclick', ()=>{ selectedExtratoId='new'; panelLocked=true; render(); });
+  on('btnImportarExtrato','onclick', ()=>{ document.getElementById('importPdfInput')?.click(); });
+  document.getElementById('importPdfInput')?.addEventListener('change', async (e)=>{
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if(!file) return;
+    showToast('Lendo o PDF…');
+    try{
+      const texto = await extrairTextoPDF(file);
+      const dados = parseExtratoTexto(texto);
+
+      // procura o cliente detectado no cadastro (por CPF ou nome parecido)
+      let clienteEncontrado = false;
+      if(dados.cpfCnpj){
+        const porCpf = registryClients.find(c=> (c.cpfCnpj||'').replace(/\D/g,'') === dados.cpfCnpj.replace(/\D/g,'') && dados.cpfCnpj.replace(/\D/g,''));
+        if(porCpf) clienteEncontrado = true;
+      }
+      if(!clienteEncontrado && dados.clienteNome){
+        const nomeNorm = dados.clienteNome.toLowerCase();
+        const porNome = registryClients.find(c=> c.nome.toLowerCase().includes(nomeNorm) || nomeNorm.includes(c.nome.toLowerCase()));
+        if(porNome) clienteEncontrado = true;
+      }
+
+      // se não achou e leu um nome, pergunta se quer cadastrar esse cliente novo agora, só com o nome
+      if(!clienteEncontrado && dados.clienteNome){
+        const cadastrarAgora = confirm(`Este é um cliente não cadastrado: "${dados.clienteNome}".\n\nCadastrar agora?`);
+        if(cadastrarAgora){
+          const novoCliente = {id: uid(), nome: dados.clienteNome, createdAt: todayStr()};
+          registryClients.push(novoCliente);
+          await saveRegistryClients();
+          showToast('Cliente "'+dados.clienteNome+'" cadastrado.');
+        }
+      }
+
+      abrirRevisaoImportacao(dados, texto);
+    }catch(err){
+      showToast('Não foi possível ler esse PDF: '+(err.message||err));
+    }
+  });
   bindDetailPanelEvents();
 }
 
@@ -1535,14 +1592,18 @@ function notaRowHtml(n, showDelete){
 function pagamentoRowHtml(p, showDelete){
   const temComprovante = p.comprovante && p.comprovante.anexado;
   const temArquivo = temComprovante && p.comprovante.dataUrl;
-  const valColor = temComprovante ? 'var(--blue)' : 'var(--gold-bright)';
+  const importado = p.obs === 'Importado do PDF do extrato';
+  const valColor = importado ? 'var(--green)' : (temComprovante ? 'var(--blue)' : 'var(--gold-bright)');
   const clipe = temComprovante ? ' 📎' : '';
   const forma = p.formaPagamento ? p.formaPagamento+' · ' : '';
   const notaExtra = temComprovante && p.comprovante.nota ? ' · '+escapeHtml(p.comprovante.nota) : '';
   const linkVer = temArquivo ? ` · <a href="#" class="ver-comprovante" data-pagid="${p.id}" style="color:var(--blue);">ver comprovante</a>` : '';
+  const estiloLinha = importado
+    ? 'background:var(--green-bg); border:1px solid var(--green); border-radius:4px; padding:10px 12px; margin-bottom:2px;'
+    : '';
   return `
-    <div class="pagamento-row">
-      <div><div class="val" style="color:${valColor};">${fmtBRL(p.valor)}${clipe}</div><div class="d">${forma}${fmtDate(p.data)}${p.obs?' · '+escapeHtml(p.obs):''}${notaExtra}${linkVer}</div></div>
+    <div class="pagamento-row" style="${estiloLinha}">
+      <div><div class="val" style="color:${valColor};">${fmtBRL(p.valor)}${importado?' 📥':clipe}</div><div class="d">${forma}${fmtDate(p.data)}${p.obs?' · '+escapeHtml(p.obs):''}${notaExtra}${linkVer}</div></div>
       ${showDelete ? `<button type="button" data-pagid="${p.id}" ${panelLocked?'disabled':''}>Excluir</button>` : ''}
     </div>`;
 }
@@ -1576,6 +1637,177 @@ function openNotaForm(ex){
     ex.notas.push({id:uid(), data, texto});
     await saveExtratos();
     showToast('Observação adicionada.');
+    close();
+    render();
+  });
+}
+
+// ---------------------------------------------------------------
+// Importação automática de extrato em PDF
+// ---------------------------------------------------------------
+async function extrairTextoPDF(file){
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({data: arrayBuffer}).promise;
+  let textoCompleto = '';
+  for(let p=1; p<=pdf.numPages; p++){
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    let lastY = null, linha = '';
+    content.items.forEach(item=>{
+      const y = item.transform[5];
+      if(lastY!==null && Math.abs(y-lastY)>2){ textoCompleto += linha.trim()+'\n'; linha=''; }
+      linha += item.str+' ';
+      lastY = y;
+    });
+    textoCompleto += linha.trim()+'\n';
+  }
+  return textoCompleto;
+}
+
+function parseValorBR(str){
+  if(!str) return null;
+  const negativo = str.trim().startsWith('-');
+  const limpo = str.replace(/[^\d,]/g,'').replace(',','.');
+  const val = parseFloat(limpo);
+  if(isNaN(val)) return null;
+  return negativo ? -val : val;
+}
+
+function parseExtratoTexto(texto){
+  const r = {clienteNome:null, cpfCnpj:null, saldoAtual:null, totalPagamentos:null, totalDebitos:null, totalServicos:null};
+  // usa uma versão "achatada" (sem quebras de linha) pra nome/CPF, porque a extração do PDF
+  // às vezes quebra linha no meio do nome por causa de espaçamento de fonte
+  const flat = texto.replace(/\s+/g, ' ');
+  let m;
+  m = flat.match(/Cliente:\s*(?:Dr\.?\s*)?([A-Za-zÀ-ÖØ-öø-ÿ'’\-\s]+?)\s*(?:\[|\(|CPF|CNPJ|$)/i);
+  if(m){
+    let nome = m[1].trim().replace(/\s{2,}/g,' ');
+    if(nome.length>=2) r.clienteNome = nome;
+  }
+  m = flat.match(/CPF\s*\/?\s*CNPJ:\s*([\d.\-\/]+)/i);
+  if(m) r.cpfCnpj = m[1].trim();
+  m = texto.match(/Saldo Atual:?\s*(-?[\d.,]+)/i) || flat.match(/Saldo Atual:?\s*(-?[\d.,]+)/i);
+  if(m) r.saldoAtual = parseValorBR(m[1]);
+  m = texto.match(/Total de Pagamentos[^:]*:?\s*(-?[\d.,]+)/i) || flat.match(/Total de Pagamentos[^:]*:?\s*(-?[\d.,]+)/i);
+  if(m) r.totalPagamentos = parseValorBR(m[1]);
+  m = texto.match(/Total de D[ée]bitos[^:]*:?\s*(-?[\d.,]+)/i) || flat.match(/Total de D[ée]bitos[^:]*:?\s*(-?[\d.,]+)/i);
+  if(m) r.totalDebitos = parseValorBR(m[1]);
+  m = texto.match(/Total de Servi[çc]os:?\s*(-?[\d.,]+)/i) || flat.match(/Total de Servi[çc]os:?\s*(-?[\d.,]+)/i);
+  if(m) r.totalServicos = parseValorBR(m[1]);
+  return r;
+}
+
+function abrirRevisaoImportacao(dados, textoCompleto){
+  const existing = document.querySelector('.overlay');
+  if(existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+
+  const valorMesSugerido = Math.abs(dados.totalServicos ?? dados.totalDebitos ?? 0);
+  const valorPagoSugerido = Math.abs(dados.totalPagamentos ?? 0);
+
+  // tenta casar automaticamente com um cliente já cadastrado, por nome ou CPF
+  let clienteSugeridoId = '';
+  if(dados.cpfCnpj){
+    const porCpf = registryClients.find(c=> (c.cpfCnpj||'').replace(/\D/g,'') === dados.cpfCnpj.replace(/\D/g,'') && dados.cpfCnpj.replace(/\D/g,''));
+    if(porCpf) clienteSugeridoId = porCpf.id;
+  }
+  if(!clienteSugeridoId && dados.clienteNome){
+    const nomeNorm = dados.clienteNome.toLowerCase();
+    const porNome = registryClients.find(c=> c.nome.toLowerCase().includes(nomeNorm) || nomeNorm.includes(c.nome.toLowerCase()));
+    if(porNome) clienteSugeridoId = porNome.id;
+  }
+
+  const options = [...registryClients].sort((a,b)=>a.nome.localeCompare(b.nome))
+    .map(cl=>`<option value="${cl.id}" ${cl.id===clienteSugeridoId?'selected':''}>${escapeHtml(cl.nome)}</option>`).join('');
+  const nenhumaCorrespondencia = !clienteSugeridoId && !!dados.clienteNome;
+
+  overlay.innerHTML = `
+    <div class="modal">
+      <button type="button" class="close" id="riClose">×</button>
+      <h2>Revisar importação</h2>
+      <p style="font-size:13px; color:var(--ink-soft); margin-top:0;">O sistema leu o PDF e encontrou os valores abaixo. Confere se está tudo certo antes de lançar — pode editar qualquer campo.</p>
+
+      <div class="field"><label>Cliente ${dados.clienteNome ? '(detectado: '+escapeHtml(dados.clienteNome)+')' : ''} *</label>
+        <select id="riCliente">
+          <option value="">— selecione —</option>
+          <option value="__novo__" ${nenhumaCorrespondencia?'selected':''}>➕ Criar novo cliente${dados.clienteNome ? ': '+escapeHtml(dados.clienteNome) : ''}</option>
+          ${options}
+        </select>
+      </div>
+      <div class="field" id="riNovoClienteWrap" style="display:${nenhumaCorrespondencia?'block':'none'};">
+        <label>Nome do novo cliente *</label>
+        <input id="riNovoClienteNome" value="${dados.clienteNome ? escapeHtml(dados.clienteNome) : ''}">
+      </div>
+      <div class="field"><label>Mês do extrato *</label><input id="riMes" type="month" value="${selectedMonth}"></div>
+      <div class="row2">
+        <div class="field"><label>Valor do mês (R$) *</label><input id="riValorMes" type="number" step="0.01" min="0" value="${valorMesSugerido.toFixed(2)}"></div>
+        <div class="field"><label>Valor pago (R$)</label><input id="riValorPago" type="number" step="0.01" min="0" value="${valorPagoSugerido.toFixed(2)}"></div>
+      </div>
+      <div class="field"><label>Data do pagamento</label><input id="riDataPagamento" type="date" value="${todayStr()}"></div>
+      <details open style="margin-top:16px; background:var(--green-bg); border:1px solid var(--green); border-radius:6px; padding:12px 14px;">
+        <summary style="cursor:pointer; font-family:var(--mono); font-size:12px; font-weight:700; letter-spacing:.4px; color:#8FDA9E;">📄 Ver texto extraído do PDF (conferência)</summary>
+        <pre style="white-space:pre-wrap; font-size:10.5px; color:var(--ink-soft); max-height:180px; overflow-y:auto; background:rgba(0,0,0,0.25); padding:10px; border-radius:4px; margin-top:10px;">${escapeHtml(textoCompleto)}</pre>
+      </details>
+      <div class="actions">
+        <button type="button" class="btn ghost" id="riCancel">Cancelar</button>
+        <button type="button" class="btn" id="riConfirmar">Confirmar e lançar</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.onclick = (e)=>{ if(e.target===overlay) overlay.remove(); };
+  const close = ()=> overlay.remove();
+  onIn(overlay,'riClose','onclick', close);
+  onIn(overlay,'riCancel','onclick', close);
+
+  onIn(overlay,'riCliente','onchange', (e)=>{
+    const wrap = overlay.querySelector('#riNovoClienteWrap');
+    if(wrap) wrap.style.display = (e.target.value==='__novo__') ? 'block' : 'none';
+  });
+
+  onIn(overlay,'riConfirmar','onclick', async ()=>{
+    let clienteId = overlay.querySelector('#riCliente')?.value || '';
+    const mes = overlay.querySelector('#riMes')?.value || selectedMonth;
+    const valorMes = parseFloat(overlay.querySelector('#riValorMes')?.value);
+    const valorPago = parseFloat(overlay.querySelector('#riValorPago')?.value)||0;
+    const dataPagamento = overlay.querySelector('#riDataPagamento')?.value || todayStr();
+
+    if(!clienteId){ showToast('Selecione o cliente correspondente.'); return; }
+    if(isNaN(valorMes) || valorMes<0){ showToast('Informe o valor do mês.'); return; }
+
+    if(clienteId==='__novo__'){
+      const novoNome = (overlay.querySelector('#riNovoClienteNome')?.value || '').trim();
+      if(!novoNome){ showToast('Informe o nome do novo cliente.'); return; }
+      const novoCliente = {id: uid(), nome: novoNome, createdAt: todayStr()};
+      registryClients.push(novoCliente);
+      await saveRegistryClients();
+      clienteId = novoCliente.id;
+    }
+
+    let ex = extratos.find(e=>e.clienteId===clienteId && e.mes===mes);
+    if(ex){
+      ensureExtratoDefaults(ex);
+      ex.valorMes = valorMes;
+      ex.textoImportado = textoCompleto;
+      if(valorPago>0){
+        ex.pagamentos.push({id:uid(), valor:valorPago, data:dataPagamento, obs:'Importado do PDF do extrato', formaPagamento:'', comprovante:{anexado:false, nota:''}});
+        ex.valorPago = Number(ex.valorPago||0) + valorPago;
+      }
+    }else{
+      ex = {
+        id: uid(), createdAt: todayStr(), mes, clienteId, valorMes, valorPago: 0,
+        extratoEnviado:false, extratoEnviadoData:null,
+        comprovante:{anexado:false, nota:''}, notas:[],
+        textoImportado: textoCompleto,
+        pagamentos: valorPago>0 ? [{id:uid(), valor:valorPago, data:dataPagamento, obs:'Importado do PDF do extrato', formaPagamento:'', comprovante:{anexado:false, nota:''}}] : []
+      };
+      if(valorPago>0) ex.valorPago = valorPago;
+      extratos.push(ex);
+    }
+    await saveExtratos();
+    showToast('Extrato importado e lançado com sucesso.');
+    selectedExtratoId = ex.id;
     close();
     render();
   });
@@ -1714,6 +1946,11 @@ function detailPanelHtml(ex, readonly){
           <div class="field"><label>Valor pago</label><div style="font-family:var(--mono);font-size:16px;color:var(--gold-bright);">${fmtBRL(s.valorPago)}</div></div>
         </div>
         <div class="calc-box" style="margin-top:16px;"><span class="k">Restante</span><span class="v" style="color:${s.aPagar>0?'var(--red)':'var(--gold-bright)'}">${fmtBRL(s.aPagar)}</span></div>
+        ${ex.textoImportado ? `
+        <details open style="margin-top:16px; background:var(--green-bg); border:1px solid var(--green); border-radius:6px; padding:12px 14px;">
+          <summary style="cursor:pointer; font-family:var(--mono); font-size:12px; font-weight:700; letter-spacing:.4px; color:#8FDA9E;">📄 Texto do PDF importado</summary>
+          <pre style="white-space:pre-wrap; font-size:10.5px; color:var(--ink-soft); max-height:220px; overflow-y:auto; background:rgba(0,0,0,0.25); padding:10px; border-radius:4px; margin-top:10px;">${escapeHtml(ex.textoImportado)}</pre>
+        </details>` : ''}
         <h3 class="section-label">Motivo / Observação</h3>
         <div class="pagamentos-list">${ex.notas.length ? ex.notas.slice().sort((a,b)=>b.data.localeCompare(a.data)).map(n=>notaRowHtml(n,false)).join('') : `<div class="empty-hist">Nenhuma observação registrada ainda.</div>`}</div>
         <h3 class="section-label">Histórico de pagamentos</h3>
@@ -1767,6 +2004,12 @@ function detailPanelHtml(ex, readonly){
         <button type="button" class="btn danger" id="dDelete" style="margin-right:auto;" ${dis}>Excluir</button>
         <button type="button" class="btn" id="dSave" ${dis}>Salvar</button>
       </div>
+
+      ${ex.textoImportado ? `
+      <details open style="margin-top:20px; background:var(--green-bg); border:1px solid var(--green); border-radius:6px; padding:12px 14px;">
+        <summary style="cursor:pointer; font-family:var(--mono); font-size:12px; font-weight:700; letter-spacing:.4px; color:#8FDA9E;">📄 Texto do PDF importado</summary>
+        <pre style="white-space:pre-wrap; font-size:10.5px; color:var(--ink-soft); max-height:220px; overflow-y:auto; background:rgba(0,0,0,0.25); padding:10px; border-radius:4px; margin-top:10px;">${escapeHtml(ex.textoImportado)}</pre>
+      </details>` : ''}
 
       <h3 class="section-label">Motivo / Observação <button type="button" class="btn ghost small" id="dAddNota" ${dis}>+ Adicionar observação</button></h3>
       <div class="pagamentos-list" id="notasList">${ex.notas.length ? ex.notas.slice().sort((a,b)=>b.data.localeCompare(a.data)).map(n=>notaRowHtml(n,true)).join('') : `<div class="empty-hist">Nenhuma observação registrada ainda.</div>`}</div>
