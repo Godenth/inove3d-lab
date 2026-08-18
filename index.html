@@ -516,6 +516,10 @@
     background:var(--panel); border:1px solid var(--gold-dim); border-radius:8px;
     padding:36px 32px; max-width:360px; width:100%; text-align:center;
   }
+  .login-logo-img{
+    width:76px; height:76px; border-radius:50%; object-fit:cover; display:block; margin:0 auto 16px;
+    border:1px solid var(--gold-dim); box-shadow:0 0 0 4px var(--panel), 0 0 0 5px var(--gold-dim);
+  }
   .login-logo{font-family:var(--display); font-weight:700; font-size:24px; color:var(--ink); letter-spacing:.5px;}
   .login-logo span{color:var(--gold-bright);}
   .login-sub{font-family:var(--mono); font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--ink-faint); margin:6px 0 24px;}
@@ -538,6 +542,25 @@
     background:var(--red-bg); border:1px solid var(--red); color:var(--red); border-radius:4px;
     padding:9px 12px; font-size:12.5px; margin-top:14px;
   }
+
+  /* ---------- tour guiado real (destaca elementos de verdade na tela) ---------- */
+  #tourOverlay{position:fixed; inset:0; z-index:300; pointer-events:none;}
+  .tour-dim{position:fixed; inset:0; background:rgba(0,0,0,0.68); animation: fadeInUp .3s ease-out both;}
+  .tour-spot{
+    position:fixed; border-radius:8px; border:2px solid var(--gold-bright);
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0.68), 0 0 18px rgba(231,194,94,0.5);
+    transition: top .35s ease, left .35s ease, width .35s ease, height .35s ease;
+    pointer-events:none;
+  }
+  .tour-tooltip{
+    position:fixed; pointer-events:auto; background:var(--panel); border:1px solid var(--gold-dim); border-radius:8px;
+    padding:16px 18px; max-width:280px; width:calc(100vw - 24px);
+    box-shadow:0 14px 34px rgba(0,0,0,0.55); animation: fadeInUp .3s ease-out both;
+  }
+  .tour-step-count{font-family:var(--mono); font-size:10px; letter-spacing:1px; color:var(--gold-bright); text-transform:uppercase; margin-bottom:6px;}
+  .tour-title{font-family:var(--display); font-weight:700; font-size:17px; color:var(--ink); margin-bottom:6px;}
+  .tour-desc{font-size:13px; color:var(--ink-soft); line-height:1.55; margin-bottom:14px;}
+  .tour-nav{display:flex; justify-content:space-between; align-items:center; gap:10px;}
 
   .toast{
     position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
@@ -575,6 +598,7 @@
           <a href="#visualizacao" class="nav-item" id="navVisualizacao">Visualização</a>
           <a href="#cadastro" class="nav-item" id="navCadastro">Cadastro de Clientes</a>
           <a href="#conta" class="nav-item" id="navConta">🔒 Conta e senha</a>
+          <button type="button" class="nav-item" id="navTutorial">❓ Como usar (tutorial)</button>
           <button type="button" class="nav-item" id="navSair" style="color:var(--red);">Sair</button>
         </div>
       </div>
@@ -593,6 +617,7 @@
 </div>
 <div id="loginScreen" class="login-screen" style="display:none;">
   <div class="login-card">
+    <img class="login-logo-img" src="data:image/jpeg;base64,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0NrXHO3BekwrFszs1HW2tUMBaQXwlrhJlvrlN9dOIWfPn+Ku9L8OL5J9p7bbZiLvH1bp44mODfA5pJLwALMA33ACz8XlTkjWvK7Px4r5256RqvQYlw2R2ZiqXxzNnjcI3te+DKRILG9jru0tdZOTyfij004MPefb22y2ZjikkqXTxsEri9sWVxkc46kAX3XO/co8Xk/LHp3PginnakgLayr5sVszG+SOrbPHI2M5jGGuD2vsbBwO7XXrZYeVypxxrTXg4/fztG7VbMx0hc8zxjO5zmQBrjJlJNhv0AHEqzj8j5Y8QhmwxT7qmtTOICAgICAgICAgICAgICDfwSojiqI5ZQXNjdnyje5zdWjzFwCjeN1mEqTqdrDXbZuq4poKiNobILxmPfG9urQb+UCRYnfqfRnx8WuO0Wq0X5E3jUqgVrllSuzdeymnE72l3dtJYwfKkIs254AXJ9CryU716p47dbbSmKbWGtpnw1DAHB4kjfGNGkb2uBO7KSL+ZU4uLXFbdVuTPN41KrFaWdNbMYsyje+ctL3iMtjb8kOdvc49APrVWXH8les+lmO/SdtrG9pTXUwZO0CWKTM2Rg8L2G4cCOB3er1ww8eMU/x9J5M05I8q2tChPbN422hbJI1uaZ7RGzN5DG73OPPUNsOipzYYyx1n0txZPj8w+tosfFdFEZG5ZoiWlzfIkjOt+hBG7quYMEYtxX07ly/J7V9aFKxYDtF7hgkETbzTPHjf5EcbRpp8oklyz5sEZfFvS7FlnHHh47T4y2tMcxbllDDHIB5Bym7XN465jod1lLDi+KOsenMuTvO0ErVQgICAgICAgICAgICAgICDKDCAgygwgygIMIMroIMLgyuguDCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIP/2Q==" alt="Inove 3D Lab">
     <div class="login-logo">INOVE<span>3D</span> LAB</div>
     <div class="login-sub">Acesso ao sistema</div>
     <div class="field"><label>E-mail</label><input id="loginUsuario" type="email" autocomplete="username" list="loginEmailSugestoes"></div>
@@ -615,6 +640,8 @@
 </div>
 <div id="toast" class="toast"></div>
 
+<div id="tourOverlay" style="display:none;"></div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script>
@@ -636,6 +663,17 @@ if(window.pdfjsLib){
 let currentView = 'financeiro'; // 'financeiro' | 'cadastro' | 'conta'
 let currentSupaUser = null; // usuário logado (vindo do Supabase Auth)
 let isLoggedIn = false;
+
+// alguns e-mails de login (contas "master") aparecem na tela como sendo o e-mail da Inove,
+// pra manter quem realmente logou discreto — o login em si continua normal por trás
+const EMAIL_EXIBICAO = {
+  'dnlll2010@gmail.com': 'inove3dlab@gmail.com'
+};
+function emailParaExibir(email){
+  if(!email) return '—';
+  return EMAIL_EXIBICAO[email.toLowerCase()] || email;
+}
+
 let registryClients = [];       // cadastro de clientes: {id, nome, createdAt}
 let extratos = [];              // lançamentos financeiros: {id, clienteId, mes, valorMes, valorPago, observacoes, extratoEnviado, extratoEnviadoData, createdAt}
 let loading = true;
@@ -884,6 +922,9 @@ async function tentarLogin(){
   currentSupaUser = (data && data.user) || null;
   hideLoginScreen();
   loadData();
+  if(localStorage.getItem('inove3d-tutorial-visto') !== 'sim'){
+    setTimeout(iniciarTour, 500);
+  }
 }
 async function fazerLogout(){
   await supa.auth.signOut();
@@ -908,6 +949,125 @@ function initLoginScreen(){
     senhaInput.focus();
   });
 }
+
+// ---------------------------------------------------------------
+// Tour guiado real — destaca elementos de verdade na tela, navega entre as telas
+// ---------------------------------------------------------------
+const TOUR_STEPS = [
+  {sel:'#hamburgerBtn', titulo:'Menu principal', desc:'Clique aqui pra navegar entre Administrador, Visualização, Cadastro de Clientes e Conta e Senha.'},
+  {sel:'#btnNovoExtrato', view:'financeiro', titulo:'Novo Extrato', desc:'Lance um extrato manualmente: escolhe o cliente já cadastrado e preenche os valores do mês.'},
+  {sel:'#btnImportarExtrato', view:'financeiro', titulo:'Importar PDF', desc:'Ou importe o PDF do extrato — o sistema lê os valores automaticamente pra você conferir antes de lançar.'},
+  {sel:'#toggleRanking', view:'financeiro', titulo:'Ranking do mês', desc:'Veja em forma de pódio quem mais fatura no mês.'},
+  {sel:'#monthLabelBtn', view:'financeiro', titulo:'Trocar o mês', desc:'Clique aqui pra navegar entre os meses e ver o histórico de cada período.'},
+  {sel:'#btnNovoCliente', view:'cadastro', titulo:'Cadastro de Clientes', desc:'Cadastre um cliente novo — só o nome já é suficiente pra começar.'},
+  {sel:'#navConta', abrirMenu:true, titulo:'Conta e Senha', desc:'Troque seu e-mail ou senha quando quiser. Prontinho — bom uso! 🎉'},
+];
+let tourStepAtual = 0;
+let tourAtiva = false;
+
+function demoSleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+async function tourIrParaPasso(i){
+  if(i<0 || i>=TOUR_STEPS.length){ encerrarTour(); return; }
+  tourStepAtual = i;
+  const passo = TOUR_STEPS[tourStepAtual];
+
+  if(passo.view && passo.view!==currentView){
+    currentView = passo.view;
+    location.hash = '#'+(passo.view==='financeiro'?'administrador':passo.view);
+    updateNav();
+    render();
+    await demoSleep(150);
+  }
+
+  const menu = document.getElementById('navMenu');
+  if(menu){ if(passo.abrirMenu) menu.classList.add('open'); else menu.classList.remove('open'); }
+
+  let alvo = document.querySelector(passo.sel);
+  let tentativas = 0;
+  while(!alvo && tentativas<12){ await demoSleep(100); alvo = document.querySelector(passo.sel); tentativas++; }
+  posicionarTour(alvo, passo);
+}
+
+function tourNavHtml(){
+  const ultima = tourStepAtual === TOUR_STEPS.length-1;
+  return `
+    <div class="tour-nav">
+      <button type="button" class="btn ghost small" id="tourPular">Pular</button>
+      <div style="display:flex; gap:8px;">
+        ${tourStepAtual>0 ? '<button type="button" class="btn ghost small" id="tourAnterior">‹</button>' : ''}
+        <button type="button" class="btn small" id="tourProximo">${ultima ? 'Concluir 🎉' : 'Próximo ›'}</button>
+      </div>
+    </div>
+  `;
+}
+function bindTourNav(){
+  on('tourPular','onclick', encerrarTour);
+  on('tourAnterior','onclick', ()=> tourIrParaPasso(tourStepAtual-1));
+  on('tourProximo','onclick', ()=>{
+    if(tourStepAtual === TOUR_STEPS.length-1) encerrarTour();
+    else tourIrParaPasso(tourStepAtual+1);
+  });
+}
+
+function posicionarTour(alvo, passo){
+  const overlay = document.getElementById('tourOverlay');
+  if(!overlay) return;
+
+  if(!alvo){
+    overlay.innerHTML = `
+      <div class="tour-dim"></div>
+      <div class="tour-tooltip" style="top:50%; left:50%; transform:translate(-50%,-50%);">
+        <div class="tour-step-count">${tourStepAtual+1} / ${TOUR_STEPS.length}</div>
+        <div class="tour-title">${escapeHtml(passo.titulo)}</div>
+        <div class="tour-desc">${escapeHtml(passo.desc)}</div>
+        ${tourNavHtml()}
+      </div>
+    `;
+    bindTourNav();
+    return;
+  }
+
+  alvo.scrollIntoView({block:'center', behavior:'smooth'});
+  setTimeout(()=>{
+    const r = alvo.getBoundingClientRect();
+    const pad = 6;
+    const spotTop = r.top-pad, spotLeft = r.left-pad, spotW = r.width+pad*2, spotH = r.height+pad*2;
+    const larguraTip = Math.min(280, window.innerWidth-24);
+    let tipTop = r.bottom+14;
+    let tipLeft = Math.min(Math.max(r.left, 12), window.innerWidth-larguraTip-12);
+    let transformExtra = '';
+    if(tipTop+180 > window.innerHeight){ tipTop = r.top-14; transformExtra = 'translateY(-100%);'; }
+    overlay.innerHTML = `
+      <div class="tour-spot" style="top:${spotTop}px; left:${spotLeft}px; width:${spotW}px; height:${spotH}px;"></div>
+      <div class="tour-tooltip" style="top:${tipTop}px; left:${tipLeft}px; transform:${transformExtra}">
+        <div class="tour-step-count">${tourStepAtual+1} / ${TOUR_STEPS.length}</div>
+        <div class="tour-title">${escapeHtml(passo.titulo)}</div>
+        <div class="tour-desc">${escapeHtml(passo.desc)}</div>
+        ${tourNavHtml()}
+      </div>
+    `;
+    bindTourNav();
+  }, 320);
+}
+
+function encerrarTour(){
+  tourAtiva = false;
+  localStorage.setItem('inove3d-tutorial-visto','sim');
+  const overlay = document.getElementById('tourOverlay');
+  if(overlay){ overlay.innerHTML=''; overlay.style.display='none'; }
+  const menu = document.getElementById('navMenu');
+  if(menu) menu.classList.remove('open');
+}
+
+function iniciarTour(){
+  tourAtiva = true;
+  const overlay = document.getElementById('tourOverlay');
+  if(overlay) overlay.style.display = 'block';
+  tourIrParaPasso(0);
+}
+
+function initTutorial(){ /* nada a inicializar — os botões do tour são ligados a cada passo */ }
 
 function comTimeout(promessa, ms, msgTimeout){
   return Promise.race([
@@ -1004,6 +1164,7 @@ function initHeader(){
     if(el) el.addEventListener('click', ()=>{ menu.classList.remove('open'); });
   });
   on('navSair','onclick', ()=>{ menu.classList.remove('open'); fazerLogout(); });
+  on('navTutorial','onclick', ()=>{ menu.classList.remove('open'); iniciarTour(); });
   window.addEventListener('hashchange', ()=>{
     currentView = hashToView(location.hash);
     updateNav();
@@ -2249,7 +2410,7 @@ function bindDetailPanelEvents(){
 // Página: Conta e Senha
 // ---------------------------------------------------------------
 function renderConta(main){
-  const emailAtual = (currentSupaUser && currentSupaUser.email) || '—';
+  const emailAtual = emailParaExibir(currentSupaUser && currentSupaUser.email);
   main.innerHTML = `
     <div class="page-title">
       <h1>Conta e Senha</h1>
@@ -2477,6 +2638,7 @@ function openClienteForm(clienteId){
 // ---------------------------------------------------------------
 async function initApp(){
   initLoginScreen();
+  initTutorial();
   await loadAuth();
   if(!isLoggedIn){
     showLoginScreen();
